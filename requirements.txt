@@ -1,0 +1,4 @@
+azure-eventhub>=5.11
+azure-identity>=1.15
+azure-eventhub-checkpointstoreblob>=1.1
+azure-kusto-data>=4.3

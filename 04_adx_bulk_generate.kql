@@ -1,0 +1,30 @@
+// ============================================================
+// 04_adx_bulk_generate.kql — Generate synthetic volume directly in ADX
+// Purpose: query / scan / cache performance tests need MILLIONS of rows.
+//          This bypasses Event Hub and writes straight into TelemetryRaw.
+// Run in ADX web UI against DB 'diagdb'. Adjust the row count as needed.
+// ============================================================
+
+.set-or-append TelemetryRaw <|
+    range i from 1 to 5000000 step 1
+    | extend
+        Timestamp = now() - totimespan(rand() * 30d),
+        DeviceId = strcat("router-", tostring(1 + toint(rand() * 100))),
+        PartitionKey = strcat("router-", tostring(1 + toint(rand() * 100))),
+        MetricName = dynamic(["cpu","memory","latency","packet_loss","queue_depth"])[toint(rand() * 5)],
+        MetricValue = round(rand() * 100, 2)
+    | extend
+        Severity = case(MetricValue > 90, "critical", MetricValue > 70, "warning", "info"),
+        Scenario = "bulk-generated",
+        Payload = dynamic({}),
+        EventHubEnqueuedTime = now(),
+        EventHubOffset = "",
+        EventHubSequenceNumber = i
+    | project Timestamp, DeviceId, PartitionKey, MetricName, MetricValue,
+              Severity, Scenario, Payload, EventHubEnqueuedTime, EventHubOffset, EventHubSequenceNumber
+
+// Verify
+TelemetryRaw | summarize count() by Scenario
+
+// Clean up only the generated rows when done (soft delete by predicate)
+// .delete table TelemetryRaw records <| TelemetryRaw | where Scenario == "bulk-generated"

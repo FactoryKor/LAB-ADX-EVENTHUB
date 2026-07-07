@@ -1,0 +1,57 @@
+// ============================================================
+// 03_adx_queries.kql — Manual diagnostic queries for ADX web UI
+// Cluster: https://<ADX_CLUSTER>.<LOCATION>.kusto.windows.net  DB: diagdb
+// ============================================================
+
+// --- Ingestion volume over time (all scenarios) ---
+TelemetryRaw
+| summarize Count = count() by bin(Timestamp, 1m), Scenario
+| order by Timestamp asc
+
+// --- Partition skew: which PartitionKey dominates? ---
+TelemetryRaw
+| where Scenario == "partition-skew"
+| summarize Count = count() by PartitionKey
+| order by Count desc
+
+// --- Ingestion failures (bad JSON / mapping mismatch) ---
+.show ingestion failures
+| order by FailedOn desc
+| take 50
+
+// --- Confirm JSON mapping is present ---
+.show table TelemetryRaw ingestion json mappings
+
+// --- Ingestion latency: Event Hub enqueue -> ADX ingestion_time() ---
+TelemetryRaw
+| where isnotempty(EventHubEnqueuedTime)
+| extend lat = ingestion_time() - EventHubEnqueuedTime
+| summarize p50 = percentile(lat, 50), p95 = percentile(lat, 95), maxLat = max(lat)
+
+// ============================================================
+// Query performance / cache vs cold-scan tests
+// NOTE: ADX hot-cache is based on INGESTION time (extent age), NOT the
+//       Timestamp column. To force a cold scan, drop the hot cache window.
+// ============================================================
+
+// (a) Force COLD (no hot cache), then run the scan query below
+.alter table TelemetryRaw policy caching hot = 0d
+
+// (b) Restore HOT cache
+.alter table TelemetryRaw policy caching hot = 1d
+
+// Scan / aggregation query (compare run time hot vs cold; check "query details")
+TelemetryRaw
+| summarize AvgValue = avg(MetricValue), MaxValue = max(MetricValue), n = count()
+    by DeviceId, MetricName
+| order by AvgValue desc
+
+// Time-range scan (needs backfilled data — see 01_send_events.py --backfill-hours)
+TelemetryRaw
+| where Timestamp between (ago(6h) .. now())
+| summarize count() by bin(Timestamp, 5m)
+| order by Timestamp asc
+
+// Inspect capacity / cache / query resource usage
+.show capacity
+.show queries | top 20 by StartedOn desc
