@@ -1,0 +1,3 @@
+Scripts_Windows + / 00_create_lab.ps1
+Scripts_Windows + / 10_adx_stop_start.ps1
+Scripts_Windows + / 99_cleanup.ps1
