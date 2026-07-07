@@ -8,7 +8,7 @@ failures, mapping mismatch, and query/scan/cache load — so you can validate di
 (e.g. `eh_diagnose` / `adx_diagnose`) against known, reproducible conditions.
 
 > ⚠️ This lab creates **billable Azure resources** (an ADX cluster is the main cost driver).
-> Use `10_adx_stop_start.sh stop` between sessions and `99_cleanup.sh` when finished.
+> Use `Scripts_Linux/10_adx_stop_start.sh stop` (or `Scripts_windows\10_adx_stop_start.ps1 -Action stop`) between sessions and the cleanup script when finished.
 
 ---
 
@@ -42,40 +42,55 @@ flowchart LR
 
 ## Repository structure
 
-| File | Purpose |
-|---|---|
-| `00_create_lab.sh` | Provisions the full lab: Event Hubs, ADX cluster/DB, Log Analytics, Storage, diagnostic settings, RBAC, table + JSON mapping, ingestion batching policy. Writes `lab.env`. |
-| `01_send_events.py` | Test event **producer** — modes: `normal / skew / burst / badjson / mismatch`; options: `--backfill-hours`, `--auth aad`. |
-| `02_slow_consumer.py` | **Slow consumer** for consumer-lag simulation, with optional Blob checkpoint store and Entra ID auth. |
-| `03_verify.py` | **Assertion harness** — runs KQL checks against ADX and prints PASS/WARN/INFO per signal. |
-| `03_adx_queries.kql` | Manual **diagnostic queries** for the ADX web UI (skew, failures, latency, cache/cold scan). |
-| `04_adx_bulk_generate.kql` | Generates **millions of synthetic rows** directly in ADX for query/scan/cache performance tests. |
-| `10_adx_stop_start.sh` | Start/stop the ADX cluster to save compute cost. |
-| `99_cleanup.sh` | Deletes the entire resource group. |
-| `requirements.txt` | Python dependencies. |
-| `README.md` / `README.ko.md` | This guide (English / Korean). |
+```
+Event_hub_ADX_Test_Lab/
+├─ Scripts_Linux/            # Bash provisioning (Cloud Shell / WSL / Linux / macOS)
+│  ├─ 00_create_lab.sh       # provisions the whole lab; writes lab.env
+│  ├─ 10_adx_stop_start.sh   # start/stop ADX cluster (cost control)
+│  └─ 99_cleanup.sh          # delete the resource group
+├─ Scripts_windows/          # PowerShell provisioning (Windows)
+│  ├─ 00_create_lab.ps1      # provisions the whole lab; writes lab.ps1
+│  ├─ 10_adx_stop_start.ps1
+│  └─ 99_cleanup.ps1
+├─ 01_send_events.py         # Producer: normal/skew/burst/badjson/mismatch, --backfill-hours, --auth aad
+├─ 02_slow_consumer.py       # Slow consumer for consumer-lag (Blob checkpoint, --auth aad)
+├─ 03_verify.py              # Assertion harness: KQL checks -> PASS/WARN/INFO
+├─ 03_adx_queries.kql        # Manual diagnostic queries (skew, failures, latency, cache/cold)
+├─ 04_adx_bulk_generate.kql  # Bulk synthetic rows for query/scan/cache perf
+├─ requirements.txt          # Python dependencies
+├─ README.md / README.ko.md  # this guide (English / Korean)
+└─ (generated) lab.env / lab.ps1   # env vars from the create script — gitignored
+```
+
+**The create script** (`Scripts_Linux/00_create_lab.sh` or `Scripts_windows/00_create_lab.ps1`) provisions
+Event Hubs, the ADX cluster/DB, Log Analytics, Storage, diagnostic settings, RBAC, the table + JSON mapping,
+and the ingestion batching policy.
+
+> **Run all commands from the repository root** so that `lab.env` / `lab.ps1` and the generated
+> `adx_init.kql` land next to the Python scripts.
 
 ---
 
 ## Prerequisites
 
 - **Azure subscription** with permission to create resources **and assign roles (RBAC)**.
-- **Azure CLI** with a **Bash** environment. The scripts are Bash — use **Azure Cloud Shell (Bash)** or WSL/Linux/macOS.
-  > On native Windows PowerShell the `.sh` scripts will not run; use Cloud Shell or WSL.
+- **Azure CLI**. Use the **Bash** scripts in `Scripts_Linux/` (Azure Cloud Shell / WSL / Linux / macOS) **or** the **PowerShell** scripts in `Scripts_windows/` (Windows).
 - **Python 3.10+**.
 - Signed in: `az login` (automatic in Cloud Shell).
 
 ---
 
-## Quick start
+## Quick start (Linux / macOS / Cloud Shell — Bash)
+
+> Run from the repository root.
 
 ```bash
 # 1) Provision the lab (~15–20 min; ADX cluster provisioning dominates)
-chmod +x 00_create_lab.sh
-./00_create_lab.sh                 # creates ./lab.env on success
+chmod +x Scripts_Linux/*.sh
+./Scripts_Linux/00_create_lab.sh   # creates ./lab.env on success
 
 # (optional) also grant a separate identity/SP data-plane access for RBAC tests:
-#   ADX_QUERY_PRINCIPAL="aadapp=<appId>;<tenantId>" ./00_create_lab.sh
+#   ADX_QUERY_PRINCIPAL="aadapp=<appId>;<tenantId>" ./Scripts_Linux/00_create_lab.sh
 
 # 2) Python environment
 source ./lab.env
@@ -89,6 +104,30 @@ python 01_send_events.py --mode normal --count 5000 --batch-size 100 --sleep-ms 
 # 4) Verify the signals landed in ADX
 python 03_verify.py
 ```
+
+### Windows (PowerShell)
+
+The `.sh` scripts have PowerShell equivalents (`.ps1`). Run them from PowerShell with Azure CLI installed and `az login` done:
+
+```powershell
+# 1) Provision the lab (creates .\lab.ps1). Run from the repository root.
+.\Scripts_windows\00_create_lab.ps1
+
+# 2) Load env vars + Python environment
+. .\lab.ps1                       # dot-source (leading dot + space)
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+# 3) Send traffic and verify
+python 01_send_events.py --mode normal --count 5000
+python 03_verify.py
+
+# cost control / cleanup
+.\Scripts_windows\10_adx_stop_start.ps1 -Action stop
+.\Scripts_windows\99_cleanup.ps1
+```
+> If script execution is blocked: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`.
 
 ADX query endpoint (also printed by the create script):
 `https://<ADX_CLUSTER>.<LOCATION>.kusto.windows.net/databases/<ADX_DB>`
@@ -150,7 +189,7 @@ To force a **cold scan**, drop the hot-cache window (see `03_adx_queries.kql`):
 
 ## Configuration (environment variables)
 
-Set before running `00_create_lab.sh` (all optional; sensible defaults provided):
+Set before running the create script (all optional; sensible defaults provided):
 
 | Variable | Default | Notes |
 |---|---|---|
@@ -169,22 +208,26 @@ Consumer flags: `--sleep-seconds`, `--checkpoint-every`, `--consumer-group`, `--
 ## Cost management & cleanup
 
 ```bash
-# Pause ADX compute between sessions
-chmod +x 10_adx_stop_start.sh
-./10_adx_stop_start.sh stop
-./10_adx_stop_start.sh start
-./10_adx_stop_start.sh status
+# Linux / Bash — pause ADX compute between sessions
+chmod +x Scripts_Linux/*.sh
+./Scripts_Linux/10_adx_stop_start.sh stop
+./Scripts_Linux/10_adx_stop_start.sh start
+./Scripts_Linux/10_adx_stop_start.sh status
 
 # Delete everything
-chmod +x 99_cleanup.sh
-./99_cleanup.sh
+./Scripts_Linux/99_cleanup.sh
+```
+```powershell
+# Windows / PowerShell
+.\Scripts_windows\10_adx_stop_start.ps1 -Action stop
+.\Scripts_windows\99_cleanup.ps1
 ```
 
 ---
 
 ## Troubleshooting
 
-- **`.sh` won't run on Windows** → use Azure Cloud Shell (Bash) or WSL.
+- **`.sh` won't run on Windows** → use the PowerShell scripts in `Scripts_windows/`, or run the Bash scripts in Azure Cloud Shell / WSL.
 - **ADX SKU not available** → set `ADX_SKU_NAME` to a SKU available in your region/subscription.
 - **RBAC not effective immediately** → role assignments can take a few minutes to propagate.
 - **No rows in ADX yet** → ADX uses queued ingestion; with the 30s batching policy allow ~1 min after sending.
