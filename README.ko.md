@@ -80,7 +80,7 @@ ingestion batching 정책을 모두 프로비저닝합니다.
 
 ---
 
-## 빠른 시작 (Linux / macOS / Cloud Shell — Bash)
+## Linux / macOS / Cloud Shell
 
 > 저장소 루트에서 실행하세요.
 
